@@ -1,22 +1,4 @@
-<!--
-  ХАКАМАТОН — Telegram Mini App «С чего тебе начать»
-  Воронка 1, пункт 6 (Telegram-механика): квиз-диагностика состояния.
 
-  Поток: интро → 7 вопросов → расчёт профиля → персональный результат
-         (профиль + рекомендованный курс + поддерживающий + бесплатная
-         практика + CTA на стартовую цену с таймером 72ч).
-
-  ДЕПЛОЙ:
-  1. Залить этот файл на любой статичный хостинг по HTTPS
-     (GitHub Pages / Netlify / Vercel / свой домен).
-  2. В @BotFather: /newapp → привязать URL к боту.
-  3. Кнопку запуска повесить в меню бота или в reply-клавиатуре.
-  4. По нажатию CTA приложение вызывает Telegram.WebApp.sendData(JSON):
-     { action:'buy'|'practice', profile, course, readiness, objection }
-     Бот ловит это в update.message.web_app_data и продолжает цепочку
-     прогрева / выставляет инвойс.
-  Файл также открывается просто в браузере (standalone-режим для превью).
--->
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
 <title>Хакаматон — с чего тебе начать</title>
