@@ -1,0 +1,1051 @@
+<!--
+  ХАКАМАТОН — Telegram Mini App «С чего тебе начать»
+  Воронка 1, пункт 6 (Telegram-механика): квиз-диагностика состояния.
+
+  Поток: интро → 7 вопросов → расчёт профиля → персональный результат
+         (профиль + рекомендованный курс + поддерживающий + бесплатная
+         практика + CTA на стартовую цену с таймером 72ч).
+
+  ДЕПЛОЙ:
+  1. Залить этот файл на любой статичный хостинг по HTTPS
+     (GitHub Pages / Netlify / Vercel / свой домен).
+  2. В @BotFather: /newapp → привязать URL к боту.
+  3. Кнопку запуска повесить в меню бота или в reply-клавиатуре.
+  4. По нажатию CTA приложение вызывает Telegram.WebApp.sendData(JSON):
+     { action:'buy'|'practice', profile, course, readiness, objection }
+     Бот ловит это в update.message.web_app_data и продолжает цепочку
+     прогрева / выставляет инвойс.
+  Файл также открывается просто в браузере (standalone-режим для превью).
+-->
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Хакаматон — с чего тебе начать</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;600;700;800&family=Onest:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+<style>
+  :root {
+    --bg: #f1efe6;
+    --paper: #ffffff;
+    --ink: #15150f;
+    --ink-soft: #6a6960;
+    --ink-faint: #9d9c92;
+    --line: #e4e1d6;
+    --lime: #c6f03a;
+    --lime-deep: #0e9c6e;
+    --pink: #ffb0c4;
+    --blue: #b9c3ff;
+    --plate: #15150f;
+    --radius: 22px;
+    --radius-sm: 15px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+  html, body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Onest', system-ui, sans-serif;
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    display: flex;
+    justify-content: center;
+    overflow-x: hidden;
+  }
+
+  /* phone-width column, centred on desktop preview */
+  .app {
+    width: 100%;
+    max-width: 440px;
+    min-height: 100vh;
+    position: relative;
+    padding: 22px 20px 36px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* soft decorative blobs */
+  .blob {
+    position: fixed;
+    border-radius: 50%;
+    filter: blur(48px);
+    opacity: .55;
+    z-index: 0;
+    pointer-events: none;
+  }
+  .blob-1 { width: 260px; height: 260px; background: var(--lime); top: -90px; right: -110px; }
+  .blob-2 { width: 240px; height: 240px; background: var(--pink); bottom: -120px; left: -120px; opacity: .4; }
+
+  .app > * { position: relative; z-index: 1; }
+
+  /* ---------- shared ---------- */
+  .wordmark {
+    font-family: 'Unbounded', sans-serif;
+    font-weight: 800;
+    font-size: 15px;
+    letter-spacing: -.02em;
+    text-transform: lowercase;
+  }
+  .wordmark::after {
+    content: "·";
+    color: var(--lime-deep);
+    margin: 0 5px;
+  }
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 26px;
+  }
+  .topbar small {
+    font-size: 11px;
+    color: var(--ink-soft);
+    font-weight: 500;
+  }
+
+  .screen { display: none; flex: 1; flex-direction: column; }
+  .screen.active { display: flex; animation: fade .45s ease; }
+  @keyframes fade { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+  .btn {
+    font-family: 'Onest', sans-serif;
+    font-weight: 700;
+    font-size: 16px;
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: 17px 20px;
+    cursor: pointer;
+    width: 100%;
+    transition: transform .12s ease, box-shadow .2s ease;
+  }
+  .btn:active { transform: scale(.985); }
+  .btn-primary {
+    background: var(--lime);
+    color: var(--ink);
+    box-shadow: 0 10px 26px -10px rgba(140,170,20,.9);
+  }
+  .btn-ghost {
+    background: transparent;
+    color: var(--ink-soft);
+    font-weight: 600;
+    font-size: 14px;
+    padding: 12px;
+  }
+  .btn-dark { background: var(--plate); color: #fff; }
+
+  /* ---------- intro ---------- */
+  .intro-kicker {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    color: var(--lime-deep);
+    margin-bottom: 14px;
+  }
+  .intro h1 {
+    font-family: 'Unbounded', sans-serif;
+    font-weight: 700;
+    font-size: 33px;
+    line-height: 1.12;
+    letter-spacing: -.025em;
+    margin-bottom: 16px;
+  }
+  .intro h1 em {
+    font-style: normal;
+    background: var(--lime);
+    padding: 0 6px;
+    border-radius: 6px;
+  }
+  .intro p.lead {
+    font-size: 15.5px;
+    line-height: 1.5;
+    color: var(--ink-soft);
+    margin-bottom: 26px;
+  }
+  .facts {
+    display: flex;
+    gap: 10px;
+    margin-bottom: auto;
+  }
+  .fact {
+    flex: 1;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    padding: 14px 12px;
+  }
+  .fact b {
+    font-family: 'Unbounded', sans-serif;
+    font-weight: 700;
+    font-size: 19px;
+    display: block;
+    margin-bottom: 3px;
+  }
+  .fact span { font-size: 11.5px; color: var(--ink-soft); line-height: 1.3; }
+  .intro-foot { margin-top: 26px; }
+  .intro-meta {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    justify-content: center;
+    margin-top: 12px;
+    font-size: 12.5px;
+    color: var(--ink-faint);
+  }
+  .dot { width: 4px; height: 4px; border-radius: 50%; background: var(--ink-faint); }
+
+  /* ---------- quiz ---------- */
+  .progress-wrap { margin-bottom: 26px; }
+  .progress-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 9px;
+  }
+  .progress-count {
+    font-family: 'Unbounded', sans-serif;
+    font-weight: 700;
+    font-size: 13px;
+  }
+  .progress-count span { color: var(--ink-faint); }
+  .progress-label { font-size: 11.5px; color: var(--ink-soft); }
+  .progress-bar {
+    height: 5px;
+    background: var(--line);
+    border-radius: 99px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    background: var(--ink);
+    border-radius: 99px;
+    transition: width .4s cubic-bezier(.4,0,.2,1);
+  }
+  .question {
+    font-family: 'Unbounded', sans-serif;
+    font-weight: 600;
+    font-size: 23px;
+    line-height: 1.22;
+    letter-spacing: -.02em;
+    margin-bottom: 22px;
+  }
+  .options { display: flex; flex-direction: column; gap: 10px; margin-bottom: auto; }
+  .option {
+    background: var(--paper);
+    border: 1.5px solid var(--line);
+    border-radius: var(--radius-sm);
+    padding: 16px 17px;
+    font-size: 15px;
+    line-height: 1.4;
+    text-align: left;
+    cursor: pointer;
+    font-family: 'Onest', sans-serif;
+    color: var(--ink);
+    transition: border-color .15s ease, background .15s ease, transform .1s ease;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+  }
+  .option:active { transform: scale(.99); }
+  .option .tick {
+    width: 19px; height: 19px;
+    border-radius: 50%;
+    border: 1.5px solid var(--ink-faint);
+    flex-shrink: 0;
+    margin-top: 1px;
+    transition: all .15s ease;
+  }
+  .option.selected {
+    border-color: var(--ink);
+    background: #fbfbf7;
+  }
+  .option.selected .tick {
+    border-color: var(--ink);
+    background: var(--lime);
+    box-shadow: inset 0 0 0 3px var(--ink);
+  }
+  .quiz-back { margin-top: 18px; }
+
+  /* ---------- calculating ---------- */
+  .calc { justify-content: center; align-items: center; text-align: center; }
+  .calc-ring {
+    width: 60px; height: 60px;
+    border-radius: 50%;
+    border: 4px solid var(--line);
+    border-top-color: var(--ink);
+    animation: spin .8s linear infinite;
+    margin-bottom: 22px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .calc h2 {
+    font-family: 'Unbounded', sans-serif;
+    font-weight: 600;
+    font-size: 20px;
+    margin-bottom: 8px;
+  }
+  .calc p { color: var(--ink-soft); font-size: 14px; transition: opacity .3s; }
+
+  /* ---------- result ---------- */
+  .result > * { animation: rise .5s ease backwards; }
+  @keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+  .r-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    background: var(--plate);
+    color: #fff;
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: .03em;
+    text-transform: uppercase;
+    padding: 7px 13px;
+    border-radius: 99px;
+    margin-bottom: 14px;
+    animation-delay: .02s;
+  }
+  .r-badge .pip { width: 6px; height: 6px; border-radius: 50%; background: var(--lime); }
+  .r-name {
+    font-family: 'Unbounded', sans-serif;
+    font-weight: 700;
+    font-size: 30px;
+    line-height: 1.12;
+    letter-spacing: -.025em;
+    margin-bottom: 12px;
+    animation-delay: .06s;
+  }
+  .r-reframe {
+    font-size: 16.5px;
+    font-weight: 600;
+    line-height: 1.4;
+    margin-bottom: 12px;
+    animation-delay: .1s;
+  }
+  .r-reframe b { background: var(--lime); padding: 0 5px; border-radius: 5px; }
+  .r-diagnosis {
+    font-size: 14.5px;
+    line-height: 1.55;
+    color: var(--ink-soft);
+    margin-bottom: 10px;
+    animation-delay: .14s;
+  }
+  .r-readiness {
+    font-size: 13.5px;
+    line-height: 1.5;
+    color: var(--ink);
+    background: #fbfbf7;
+    border-left: 3px solid var(--lime);
+    padding: 11px 14px;
+    border-radius: 0 10px 10px 0;
+    margin-bottom: 26px;
+    animation-delay: .18s;
+  }
+
+  .section-label {
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin-bottom: 10px;
+  }
+
+  .course-card {
+    background: var(--paper);
+    border: 1.5px solid var(--ink);
+    border-radius: var(--radius);
+    padding: 18px;
+    margin-bottom: 12px;
+    animation-delay: .22s;
+    position: relative;
+  }
+  .course-card .hit {
+    position: absolute;
+    top: -10px; right: 16px;
+    background: var(--pink);
+    color: var(--ink);
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: .04em;
+    padding: 4px 10px;
+    border-radius: 99px;
+  }
+  .course-name {
+    font-family: 'Unbounded', sans-serif;
+    font-weight: 700;
+    font-size: 19px;
+    letter-spacing: -.02em;
+    margin-bottom: 5px;
+  }
+  .course-tagline {
+    font-size: 13.5px;
+    line-height: 1.4;
+    color: var(--ink-soft);
+    margin-bottom: 14px;
+  }
+  .course-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    margin-bottom: 16px;
+  }
+  .chip {
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 5px 9px;
+    font-size: 11.5px;
+    font-weight: 500;
+    color: var(--ink);
+  }
+  .price-row {
+    display: flex;
+    align-items: baseline;
+    gap: 9px;
+    margin-bottom: 4px;
+  }
+  .price-now {
+    font-family: 'Unbounded', sans-serif;
+    font-weight: 700;
+    font-size: 22px;
+  }
+  .price-old {
+    font-size: 14px;
+    color: var(--ink-faint);
+    text-decoration: line-through;
+  }
+  .price-tag {
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--lime-deep);
+    background: rgba(14,156,110,.1);
+    padding: 2px 7px;
+    border-radius: 6px;
+  }
+
+  .timer {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    background: var(--plate);
+    color: #fff;
+    border-radius: var(--radius-sm);
+    padding: 12px;
+    margin-bottom: 10px;
+    animation-delay: .26s;
+  }
+  .timer .lbl { font-size: 11.5px; color: #b9b8ad; }
+  .timer .clock {
+    font-family: 'Unbounded', sans-serif;
+    font-weight: 700;
+    font-size: 16px;
+    letter-spacing: .02em;
+    font-variant-numeric: tabular-nums;
+  }
+  .objection {
+    font-size: 12.5px;
+    line-height: 1.45;
+    color: var(--ink-soft);
+    text-align: center;
+    margin: 12px 4px 0;
+    animation-delay: .3s;
+  }
+
+  .support-card {
+    background: transparent;
+    border: 1.5px dashed var(--line);
+    border-radius: var(--radius-sm);
+    padding: 15px 16px;
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    gap: 13px;
+    animation-delay: .24s;
+  }
+  .support-card .arrow {
+    font-family: 'Unbounded', sans-serif;
+    font-weight: 700;
+    color: var(--lime-deep);
+    font-size: 16px;
+  }
+  .support-card .s-name {
+    font-weight: 700;
+    font-size: 14.5px;
+    margin-bottom: 2px;
+  }
+  .support-card .s-sub { font-size: 12px; color: var(--ink-soft); }
+
+  .practice {
+    background: var(--blue);
+    border-radius: var(--radius);
+    padding: 18px;
+    margin-bottom: 14px;
+    animation-delay: .28s;
+  }
+  .practice h3 {
+    font-family: 'Unbounded', sans-serif;
+    font-weight: 600;
+    font-size: 16px;
+    margin-bottom: 5px;
+  }
+  .practice p { font-size: 13px; color: #2c3050; line-height: 1.4; margin-bottom: 13px; }
+
+  .cta-block { animation-delay: .26s; }
+  .restart-row { margin-top: 16px; animation-delay: .34s; }
+
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    transform: translateX(-50%) translateY(120%);
+    background: var(--plate);
+    color: #fff;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 13px 20px;
+    border-radius: 12px;
+    z-index: 50;
+    transition: transform .35s cubic-bezier(.4,0,.2,1);
+    max-width: 380px;
+    width: calc(100% - 40px);
+    text-align: center;
+  }
+  .toast.show { transform: translateX(-50%) translateY(0); }
+</style>
+
+<div class="blob blob-1"></div>
+<div class="blob blob-2"></div>
+
+<div class="app">
+  <div class="topbar">
+    <span class="wordmark">хакаматон</span>
+    <small id="topbarHint">диагностика · 1 минута</small>
+  </div>
+
+  <!-- ИНТРО -->
+  <section class="screen active" id="screen-intro">
+    <div class="intro">
+      <div class="intro-kicker">Бесплатный тест от Ирины Хакамады</div>
+      <h1>С чего тебе <em>начать</em> на Хакаматоне</h1>
+      <p class="lead">7 курсов — это много, и легко застрять в выборе. Ответь на 7 вопросов: покажу, в каком ты состоянии и какой первый шаг разумнее всего сделать именно тебе.</p>
+      <div class="facts">
+        <div class="fact"><b>7</b><span>коротких вопросов</span></div>
+        <div class="fact"><b>1</b><span>точный ответ для тебя</span></div>
+        <div class="fact"><b>3 мин</b><span>практика в подарок</span></div>
+      </div>
+    </div>
+    <div class="intro-foot">
+      <button class="btn btn-primary" onclick="startQuiz()">Пройти тест</button>
+      <div class="intro-meta">
+        <span>400 000 участников</span><span class="dot"></span><span>27 стран</span><span class="dot"></span><span>без спама</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- КВИЗ -->
+  <section class="screen" id="screen-quiz">
+    <div class="progress-wrap">
+      <div class="progress-top">
+        <span class="progress-count"><span id="qNum">01</span> / 07</span>
+        <span class="progress-label" id="qPhase">Шаг диагностики</span>
+      </div>
+      <div class="progress-bar"><div class="progress-fill" id="qFill"></div></div>
+    </div>
+    <h2 class="question" id="qText"></h2>
+    <div class="options" id="qOptions"></div>
+    <button class="btn btn-ghost quiz-back" id="qBack" onclick="goBack()">← Назад</button>
+  </section>
+
+  <!-- РАСЧЁТ -->
+  <section class="screen calc" id="screen-calc">
+    <div class="calc-ring"></div>
+    <h2>Считаю твой профиль</h2>
+    <p id="calcLine">Сопоставляю ответы…</p>
+  </section>
+
+  <!-- РЕЗУЛЬТАТ -->
+  <section class="screen" id="screen-result">
+    <div class="result" id="resultBody"></div>
+  </section>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ============================================================
+   ДАННЫЕ
+   ============================================================ */
+
+// Курсы — данные с витрины сайта. Цены — гипотеза, заменить на реальные.
+const COURSES = {
+  svoboda: {
+    title: 'Внутренняя свобода',
+    tagline: 'Как перестать угождать и решиться на жизнь по своим правилам',
+    meta: ['14 видеоуроков', '10 практик', '2 недели', 'можно с куратором'],
+    hit: false, full: 4900, start: 2900
+  },
+  energy: {
+    title: 'Энергия',
+    tagline: 'Как получать, сохранять и приумножать свою энергию',
+    meta: ['10 видеоуроков', '10 практик', '1 месяц', 'можно с куратором'],
+    hit: false, full: 5900, start: 3900
+  },
+  balance: {
+    title: 'Баланс',
+    tagline: 'Как не впадать в крайности и двигаться вперёд, когда вокруг хаос',
+    meta: ['23 видеоурока', '23 практики', '1 месяц', 'можно с куратором'],
+    hit: true, full: 6900, start: 4900
+  },
+  think: {
+    title: 'Думай сам',
+    tagline: 'Как находить ответы в собственной голове, а не ждать готовых',
+    meta: ['16 уроков + 5 бонусных', '13 практик', '1 месяц', 'можно с куратором'],
+    hit: false, full: 5900, start: 3900
+  },
+  power: {
+    title: 'Женская сила',
+    tagline: 'Как почувствовать себя сильной, желанной и любимой',
+    meta: ['16 видеоуроков', 'бонусные материалы', '1 месяц', 'можно с куратором'],
+    hit: false, full: 5900, start: 3900
+  },
+  creative: {
+    title: 'Креативность',
+    tagline: 'Как перепрограммировать мозг на нестандартные решения',
+    meta: ['11 видеоуроков', '11 практик', '1 месяц', 'можно с куратором'],
+    hit: false, full: 5400, start: 3400
+  }
+};
+
+// 5 профилей состояний
+const PROFILES = {
+  burnout: {
+    name: 'Выгорание',
+    badge: 'Твой профиль состояния',
+    reframe: 'Это не лень и не слабость. Это <b>пустой бак</b>.',
+    diagnosis: 'Ты держишься на усилии, а не на ресурсе. Отдых помогает на пару дней — а потом всё сначала, потому что вопрос не в усталости, а в том, как ты получаешь и на что сливаешь свою энергию.',
+    primary: 'energy', supporting: 'balance'
+  },
+  chaos: {
+    name: 'Хаос без опоры',
+    badge: 'Твой профиль состояния',
+    reframe: 'Это не неорганизованность. Это <b>перегруз системы</b>.',
+    diagnosis: 'Дел гора, всё важно, и тебя кидает из крайности в крайность. Планировщики не спасают, потому что дело не в списке задач, а в опоре, на которой ты стоишь, когда вокруг хаос.',
+    primary: 'balance', supporting: 'energy'
+  },
+  rules: {
+    name: 'Жизнь по чужим правилам',
+    badge: 'Твой профиль состояния',
+    reframe: 'Это не безотказность. Это <b>отложенное право на свой выбор</b>.',
+    diagnosis: 'Ты делаешь то, что должна, что ждут, что «правильно» — а своё откладываешь. Дело не в том, что ты не умеешь говорить «нет». Дело в том, что ты пока не разрешила себе хотеть.',
+    primary: 'svoboda', supporting: 'power'
+  },
+  fog: {
+    name: 'Туман в решениях',
+    badge: 'Твой профиль состояния',
+    reframe: 'Это не нерешительность. Это <b>привычка ждать готовый ответ</b>.',
+    diagnosis: 'Ты собираешь чужие мнения, советуешься, гуглишь — и всё равно стоишь на месте. Не потому что не разбираешься, а потому что разучилась доверять собственной голове.',
+    primary: 'think', supporting: 'creative'
+  },
+  lost: {
+    name: 'Потеря контакта с собой',
+    badge: 'Твой профиль состояния',
+    reframe: 'Это не кризис возраста. Это <b>разрыв связи с собой</b>.',
+    diagnosis: 'Снаружи всё нормально, а внутри будто выключили искру. Спорт, шопинг, смена внешности не возвращают её — потому что сила и желанность живут не там.',
+    primary: 'power', supporting: 'svoboda'
+  }
+};
+
+// 7 вопросов. type: 'profile' влияет на счёт, 'readiness'/'objection' — на текст результата.
+const QUESTIONS = [
+  {
+    type: 'profile',
+    q: 'Если честно — что с тобой чаще всего в последние месяцы?',
+    options: [
+      { t: 'Просыпаюсь уже без сил, на всё нужно усилие', v: 'burnout' },
+      { t: 'Дел гора, всё валится — не понимаю, за что хвататься', v: 'chaos' },
+      { t: 'Делаю то, что должна и что ждут, а не то, что хочу', v: 'rules' },
+      { t: 'Не могу принять решение — бесконечно сомневаюсь', v: 'fog' },
+      { t: 'Будто выключили искру — и женскую в том числе', v: 'lost' }
+    ]
+  },
+  {
+    type: 'profile',
+    q: 'Появился свободный час. Куда он обычно уходит?',
+    options: [
+      { t: 'Просто лежу — больше ни на что нет ресурса', v: 'burnout' },
+      { t: 'Пытаюсь впихнуть туда ещё десять дел', v: 'chaos' },
+      { t: 'Трачу на то, что нужно другим, а не мне', v: 'rules' },
+      { t: 'Прокручиваю в голове то, что никак не решу', v: 'fog' },
+      { t: 'Честно — не помню, когда он был', v: 'lost' }
+    ]
+  },
+  {
+    type: 'profile',
+    q: 'Что сейчас больше всего злит в самой себе?',
+    options: [
+      { t: 'Что нет энергии даже на любимое', v: 'burnout' },
+      { t: 'Что мечусь и ничего не довожу до конца', v: 'chaos' },
+      { t: 'Что не умею выбирать себя', v: 'rules' },
+      { t: 'Что жду, пока кто-то скажет, как правильно', v: 'fog' },
+      { t: 'Что перестала себе нравиться', v: 'lost' }
+    ]
+  },
+  {
+    type: 'profile',
+    q: 'Представь: проблема волшебно решена. Что меняется первым?',
+    options: [
+      { t: 'У меня снова есть силы', v: 'burnout' },
+      { t: 'Появляется ясность и опора', v: 'chaos' },
+      { t: 'Я живу по своим правилам', v: 'rules' },
+      { t: 'Я доверяю своим решениям', v: 'fog' },
+      { t: 'Я снова чувствую себя — собой', v: 'lost' }
+    ]
+  },
+  {
+    type: 'profile',
+    q: 'Что ты уже пробовала, но хватило ненадолго?',
+    options: [
+      { t: 'Отпуск и отдых — эффекта на неделю', v: 'burnout' },
+      { t: 'Списки, планировщики, тайм-менеджмент', v: 'chaos' },
+      { t: 'Читала про границы — на деле не выходит', v: 'rules' },
+      { t: 'Спрашивала совета — каждый говорит своё', v: 'fog' },
+      { t: 'Спорт, шопинг, новый образ — всё не то', v: 'lost' }
+    ]
+  },
+  {
+    type: 'readiness',
+    q: 'Насколько ты готова менять это прямо сейчас?',
+    options: [
+      { t: 'Готова — нужен понятный первый шаг', v: 'high' },
+      { t: 'Готова, но боюсь снова бросить на полпути', v: 'fear' },
+      { t: 'Пока скорее присматриваюсь', v: 'low' }
+    ]
+  },
+  {
+    type: 'objection',
+    q: 'А что обычно тебя останавливает?',
+    options: [
+      { t: 'Нет времени на курсы', v: 'time' },
+      { t: 'Уже покупала курсы и не доходила', v: 'finish' },
+      { t: 'Не верю, что сработает именно у меня', v: 'belief' },
+      { t: 'Не понимаю, с чего вообще начать', v: 'start' }
+    ]
+  }
+];
+
+const READINESS_COPY = {
+  high: 'Ты готова — это уже половина дела. Осталось не растягивать решение на «потом».',
+  fear: 'Страх «снова брошу» — нормальный. Поэтому твой первый шаг — короткий курс, а не марафон, и есть формат с куратором.',
+  low: 'Присматриваешься — это честно. Тогда начни с бесплатной практики ниже, без обязательств — а курс посмотришь после.'
+};
+
+const OBJECTION_COPY = {
+  time: '«Нет времени» — уроки в курсе по 10–15 минут, можно проходить с телефона между делами.',
+  finish: '«Покупала и не доходила» — поэтому есть формат с куратором: он не даёт бросить на середине.',
+  belief: '«Вдруг не сработает» — поэтому ниже бесплатная практика: проверь метод на себе ещё до оплаты.',
+  start: '«С чего начать» — этот тест только что ответил. Твой первый шаг — курс выше.'
+};
+
+/* ============================================================
+   СОСТОЯНИЕ
+   ============================================================ */
+let answers = [];     // выбранный индекс по каждому вопросу
+let current = 0;      // индекс текущего вопроса
+let deadline = 0;     // дедлайн стартовой цены
+let timerInt = null;
+let lastResult = null;
+
+const tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
+
+/* ============================================================
+   TELEGRAM INIT
+   ============================================================ */
+if (tg) {
+  try {
+    tg.ready();
+    tg.expand();
+    if (tg.setHeaderColor) tg.setHeaderColor('#f1efe6');
+    if (tg.setBackgroundColor) tg.setBackgroundColor('#f1efe6');
+    if (tg.BackButton) {
+      tg.BackButton.onClick(goBack);
+    }
+  } catch (e) { /* standalone fallback */ }
+}
+function haptic(style) {
+  if (tg && tg.HapticFeedback) {
+    try { tg.HapticFeedback.impactOccurred(style || 'light'); } catch (e) {}
+  }
+}
+
+/* ============================================================
+   НАВИГАЦИЯ ПО ЭКРАНАМ
+   ============================================================ */
+function show(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  window.scrollTo(0, 0);
+}
+
+function startQuiz() {
+  haptic('medium');
+  answers = [];
+  current = 0;
+  renderQuestion();
+  show('screen-quiz');
+}
+
+function renderQuestion() {
+  const q = QUESTIONS[current];
+  document.getElementById('qNum').textContent = String(current + 1).padStart(2, '0');
+  document.getElementById('qFill').style.width = ((current) / QUESTIONS.length * 100) + '%';
+  document.getElementById('qText').textContent = q.q;
+  document.getElementById('qPhase').textContent =
+    q.type === 'profile' ? 'Шаг диагностики'
+    : q.type === 'readiness' ? 'Почти всё' : 'Последний вопрос';
+
+  const wrap = document.getElementById('qOptions');
+  wrap.innerHTML = '';
+  q.options.forEach((opt, i) => {
+    const el = document.createElement('button');
+    el.className = 'option' + (answers[current] === i ? ' selected' : '');
+    el.innerHTML = '<span class="tick"></span><span>' + opt.t + '</span>';
+    el.onclick = () => choose(i);
+    wrap.appendChild(el);
+  });
+
+  const back = document.getElementById('qBack');
+  back.style.display = current === 0 ? 'none' : 'block';
+  if (tg && tg.BackButton) {
+    current === 0 ? tg.BackButton.hide() : tg.BackButton.show();
+  }
+}
+
+function choose(i) {
+  haptic('light');
+  answers[current] = i;
+  // подсветить выбор, затем плавно перейти дальше
+  const opts = document.querySelectorAll('#qOptions .option');
+  opts.forEach((o, idx) => o.classList.toggle('selected', idx === i));
+  setTimeout(() => {
+    if (current < QUESTIONS.length - 1) {
+      current++;
+      renderQuestion();
+    } else {
+      document.getElementById('qFill').style.width = '100%';
+      runCalc();
+    }
+  }, 260);
+}
+
+function goBack() {
+  if (current === 0) return;
+  haptic('light');
+  current--;
+  renderQuestion();
+  show('screen-quiz');
+}
+
+/* ============================================================
+   РАСЧЁТ ПРОФИЛЯ
+   ============================================================ */
+function runCalc() {
+  show('screen-calc');
+  if (tg && tg.BackButton) tg.BackButton.hide();
+  const lines = ['Сопоставляю ответы…', 'Считаю профиль состояния…', 'Подбираю первый шаг…'];
+  let k = 0;
+  const cl = document.getElementById('calcLine');
+  const li = setInterval(() => {
+    k++;
+    if (k < lines.length) {
+      cl.style.opacity = 0;
+      setTimeout(() => { cl.textContent = lines[k]; cl.style.opacity = 1; }, 200);
+    }
+  }, 560);
+  setTimeout(() => { clearInterval(li); showResult(); }, 1750);
+}
+
+function computeProfile() {
+  const score = { burnout: 0, chaos: 0, rules: 0, fog: 0, lost: 0 };
+  let firstPick = null;
+  QUESTIONS.forEach((q, idx) => {
+    if (q.type !== 'profile') return;
+    const v = q.options[answers[idx]].v;
+    score[v]++;
+    if (firstPick === null) firstPick = v;
+  });
+  // победитель; при равенстве — приоритет ответу на 1-й вопрос
+  let best = firstPick, bestVal = -1;
+  Object.keys(score).forEach(k => {
+    if (score[k] > bestVal) { bestVal = score[k]; best = k; }
+  });
+  const tied = Object.keys(score).filter(k => score[k] === bestVal);
+  if (tied.length > 1 && tied.includes(firstPick)) best = firstPick;
+  return best;
+}
+
+function getMeta(type) {
+  const idx = QUESTIONS.findIndex(q => q.type === type);
+  return QUESTIONS[idx].options[answers[idx]].v;
+}
+
+/* ============================================================
+   ЭКРАН РЕЗУЛЬТАТА
+   ============================================================ */
+function showResult() {
+  const key = computeProfile();
+  const p = PROFILES[key];
+  const readiness = getMeta('readiness');
+  const objection = getMeta('objection');
+  const primary = COURSES[p.primary];
+  const support = COURSES[p.supporting];
+  lastResult = { profile: key, course: p.primary, readiness: readiness, objection: objection };
+
+  const fmt = n => n.toLocaleString('ru-RU');
+
+  const metaChips = primary.meta.map(m => '<span class="chip">' + m + '</span>').join('');
+
+  document.getElementById('resultBody').innerHTML = `
+    <div class="r-badge"><span class="pip"></span>${p.badge}</div>
+    <div class="r-name">${p.name}</div>
+    <div class="r-reframe">${p.reframe}</div>
+    <div class="r-diagnosis">${p.diagnosis}</div>
+    <div class="r-readiness">${READINESS_COPY[readiness]}</div>
+
+    <div class="section-label">Твой первый шаг</div>
+    <div class="course-card">
+      ${primary.hit ? '<span class="hit">ХИТ ПРОДАЖ</span>' : ''}
+      <div class="course-name">${primary.title}</div>
+      <div class="course-tagline">${primary.tagline}</div>
+      <div class="course-meta">${metaChips}</div>
+      <div class="price-row">
+        <span class="price-now">${fmt(primary.start)} ₽</span>
+        <span class="price-old">${fmt(primary.full)} ₽</span>
+        <span class="price-tag">стартовая цена</span>
+      </div>
+    </div>
+
+    <div class="timer">
+      <span class="lbl">стартовая цена сгорит через</span>
+      <span class="clock" id="clock">72:00:00</span>
+    </div>
+
+    <div class="cta-block">
+      <button class="btn btn-primary" onclick="cta('buy')">Забрать «${primary.title}» за ${fmt(primary.start)} ₽</button>
+      <div class="objection">${OBJECTION_COPY[objection]}</div>
+    </div>
+
+    <div style="height:26px"></div>
+    <div class="section-label">Дальше можно усилить</div>
+    <div class="support-card">
+      <span class="arrow">→</span>
+      <div>
+        <div class="s-name">${support.title}</div>
+        <div class="s-sub">${support.tagline}</div>
+      </div>
+    </div>
+
+    <div class="practice">
+      <h3>Практика от Ирины — 3 минуты</h3>
+      <p>Короткое упражнение под твой профиль. Бесплатно, прямо сейчас — почувствуй метод до того, как решишь про курс.</p>
+      <button class="btn btn-dark" onclick="cta('practice')">Забрать практику</button>
+    </div>
+
+    <div class="restart-row">
+      <button class="btn btn-ghost" onclick="restart()">Пройти тест заново</button>
+    </div>
+  `;
+
+  show('screen-result');
+  document.getElementById('topbarHint').textContent = 'результат готов';
+  startTimer();
+  setupMainButton(primary, fmt);
+}
+
+/* таймер 72ч (в проде дедлайн задаёт бот; здесь — от момента результата) */
+function startTimer() {
+  deadline = Date.now() + 72 * 3600 * 1000;
+  if (timerInt) clearInterval(timerInt);
+  const tick = () => {
+    let s = Math.max(0, Math.floor((deadline - Date.now()) / 1000));
+    const h = String(Math.floor(s / 3600)).padStart(2, '0');
+    const m = String(Math.floor((s % 3600) / 60)).padStart(2, '0');
+    const sec = String(s % 60).padStart(2, '0');
+    const el = document.getElementById('clock');
+    if (el) el.textContent = h + ':' + m + ':' + sec;
+  };
+  tick();
+  timerInt = setInterval(tick, 1000);
+}
+
+/* нативная нижняя кнопка Telegram дублирует CTA */
+function setupMainButton(course, fmt) {
+  if (!tg || !tg.MainButton) return;
+  try {
+    tg.MainButton.setParams({
+      text: 'Забрать за ' + fmt(course.start) + ' ₽',
+      color: '#15150f',
+      text_color: '#ffffff',
+      is_active: true,
+      is_visible: true
+    });
+    tg.MainButton.offClick(mbHandler);
+    tg.MainButton.onClick(mbHandler);
+  } catch (e) {}
+}
+function mbHandler() { cta('buy'); }
+
+/* ============================================================
+   CTA — передача данных боту
+   ============================================================ */
+function cta(action) {
+  haptic('medium');
+  const payload = JSON.stringify({
+    action: action,                 // 'buy' | 'practice'
+    profile: lastResult.profile,
+    course: lastResult.course,
+    readiness: lastResult.readiness,
+    objection: lastResult.objection,
+    ts: Date.now()
+  });
+
+  if (tg && tg.sendData) {
+    // в реальном мини-аппе: бот ловит web_app_data и продолжает воронку
+    tg.sendData(payload);
+    // tg.close() вызывается Telegram автоматически после sendData
+  } else {
+    // standalone-превью без Telegram
+    const msg = action === 'buy'
+      ? 'Готово! В Telegram бот сразу продолжит: оформление и старт курса.'
+      : 'Готово! В Telegram бот пришлёт видео-практику и тёплую цепочку.';
+    showToast(msg);
+    console.log('web_app_data →', payload);
+  }
+}
+
+function restart() {
+  haptic('light');
+  if (timerInt) clearInterval(timerInt);
+  if (tg && tg.MainButton) { try { tg.MainButton.hide(); } catch (e) {} }
+  document.getElementById('topbarHint').textContent = 'диагностика · 1 минута';
+  answers = [];
+  current = 0;
+  show('screen-intro');
+}
+
+/* ============================================================
+   TOAST (только для standalone-превью)
+   ============================================================ */
+let toastT = null;
+function showToast(text) {
+  const t = document.getElementById('toast');
+  t.textContent = text;
+  t.classList.add('show');
+  if (toastT) clearTimeout(toastT);
+  toastT = setTimeout(() => t.classList.remove('show'), 3800);
+}
+</script>
